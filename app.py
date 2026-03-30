@@ -80,22 +80,22 @@ def load_tips_library() -> list[dict]:
     if len(rows) <= 1:
         return []
 
+    valid_categories = set(hse_bot.CATEGORIES)
     result = []
     for row in rows[1:]:  # skip header
         while len(row) < 6:
             row.append("")
-        category = row[3] if row[3] else "Uncategorized"
-        # Old 4-col rows: column 3 was the full alert, not a category
-        # Detect by checking if it looks like a category name (short, no newlines)
-        tip_text  = row[4] if row[4] else row[3]
-        full_alert = row[5] if row[5] else row[3]
+        category = row[3].strip()
+        # Skip old blob rows — if category is not a known category, discard the row
+        if category not in valid_categories:
+            continue
         result.append({
             "timestamp":  row[0],
             "filename":   row[1],
             "groups":     row[2],
             "category":   category,
-            "tip_text":   tip_text,
-            "full_alert": full_alert,
+            "tip_text":   row[4],
+            "full_alert": row[5],
         })
     return list(reversed(result))  # newest first
 
@@ -131,34 +131,24 @@ def main():
                 return
 
         if not tips_rows:
-            st.info("No tips logged yet.")
+            st.info("No tips logged yet. Tips will appear here after you send your first alert.")
             return
 
-        # Build category list from actual data only
-        all_categories = sorted({r["category"] for r in tips_rows})
-
-        selected_cats = st.multiselect(
-            "Filter by Category",
-            options=all_categories,
-            default=all_categories,
-        )
-
-        filtered = [r for r in tips_rows if r["category"] in selected_cats]
-        st.caption(f"Showing {len(filtered)} tip(s) across {len(selected_cats)} category/categories.")
-        st.divider()
-
-        # Group by category and display
+        # Group by category
         from collections import defaultdict
         grouped = defaultdict(list)
-        for r in filtered:
+        for r in tips_rows:
             grouped[r["category"]].append(r)
 
+        st.caption(f"{len(tips_rows)} tip(s) across {len(grouped)} category/categories.")
+        st.divider()
+
         for category in sorted(grouped.keys()):
-            st.subheader(f"🏷️ {category}  ({len(grouped[category])})")
-            for tip in grouped[category]:
-                st.info(tip["tip_text"])
-                st.caption(f"📅 {tip['timestamp']}  |  📁 {tip['filename']}  |  👥 {tip['groups']}")
-            st.divider()
+            tips_in_cat = grouped[category]
+            with st.expander(f"🏷️ {category}  ({len(tips_in_cat)})"):
+                for tip in tips_in_cat:
+                    st.info(tip["tip_text"])
+                    st.caption(f"📅 {tip['timestamp']}  |  📁 {tip['filename']}  |  👥 {tip['groups']}")
         return
 
     GROUP_MAP = get_group_map()
