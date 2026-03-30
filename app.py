@@ -2,6 +2,7 @@ import os
 import time
 import tempfile
 
+import requests
 import streamlit as st
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -12,14 +13,36 @@ import hse_bot
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 APP_PASSWORD = os.getenv("APP_PASSWORD", "geco2024")
-GROUPS_RAW   = [g.strip() for g in os.getenv("GREEN_API_GROUPS", "").split(",") if g.strip()]
-GROUP_NAMES  = [g.strip() for g in os.getenv("GREEN_API_GROUP_NAMES", "").split(",") if g.strip()]
 
-# Map group IDs to friendly names — fallback to ID if names not set
-GROUP_MAP = {
-    GROUPS_RAW[i]: (GROUP_NAMES[i] if i < len(GROUP_NAMES) else GROUPS_RAW[i])
-    for i in range(len(GROUPS_RAW))
-}
+
+@st.cache_data(ttl=300)
+def fetch_all_groups(instance_id: str, token: str) -> dict:
+    """Fetch all WhatsApp groups from the Green API device. Returns {group_id: group_name}."""
+    try:
+        url = f"https://api.green-api.com/waInstance{instance_id}/getContacts/{token}"
+        resp = requests.get(url, timeout=15)
+        if resp.status_code != 200:
+            return {}
+        contacts = resp.json()
+        return {
+            c["id"]: c.get("name") or c.get("id")
+            for c in contacts
+            if c.get("id", "").endswith("@g.us")
+        }
+    except Exception:
+        return {}
+
+
+def get_group_map() -> dict:
+    instance_id = os.getenv("GREEN_API_INSTANCE_ID")
+    token = os.getenv("GREEN_API_TOKEN")
+    if instance_id and token:
+        groups = fetch_all_groups(instance_id, token)
+        if groups:
+            return groups
+    # Fallback to manually configured groups if API fails
+    fallback = [g.strip() for g in os.getenv("GREEN_API_GROUPS", "").split(",") if g.strip()]
+    return {g: g for g in fallback}
 
 
 def check_password():
@@ -36,7 +59,8 @@ def check_password():
     return False
 
 
-def load_tips_library():
+@st.cache_data(ttl=300)
+def load_tips_library() -> list[dict]:
     log_sheet_id = os.getenv("LOG_SHEET_ID")
     creds_content = os.getenv("GOOGLE_CREDS_JSON_CONTENT")
     if creds_content:
@@ -55,8 +79,25 @@ def load_tips_library():
     rows = sheet.get_all_values()
     if len(rows) <= 1:
         return []
-    # Skip header row
-    return list(reversed(rows[1:]))  # newest first
+
+    result = []
+    for row in rows[1:]:  # skip header
+        while len(row) < 6:
+            row.append("")
+        category = row[3] if row[3] else "Uncategorized"
+        # Old 4-col rows: column 3 was the full alert, not a category
+        # Detect by checking if it looks like a category name (short, no newlines)
+        tip_text  = row[4] if row[4] else row[3]
+        full_alert = row[5] if row[5] else row[3]
+        result.append({
+            "timestamp":  row[0],
+            "filename":   row[1],
+            "groups":     row[2],
+            "category":   category,
+            "tip_text":   tip_text,
+            "full_alert": full_alert,
+        })
+    return list(reversed(result))  # newest first
 
 
 def main():
@@ -69,32 +110,58 @@ def main():
 
     if page == "Tips Library":
         st.title("📚 Tips Library")
-        st.caption("All previously generated and sent safety alerts.")
+        st.caption("Browse individual safety tips by category.")
         st.divider()
 
         if not os.getenv("LOG_SHEET_ID"):
             st.warning("No LOG_SHEET_ID configured — cannot load library.")
             return
 
+        col1, col2 = st.columns([6, 1])
+        with col2:
+            if st.button("🔄 Refresh"):
+                load_tips_library.clear()
+                st.rerun()
+
         with st.spinner("Loading tips library..."):
             try:
-                rows = load_tips_library()
+                tips_rows = load_tips_library()
             except Exception as e:
                 st.error(f"Could not load library: {e}")
                 return
 
-        if not rows:
-            st.info("No alerts have been sent yet.")
+        if not tips_rows:
+            st.info("No tips logged yet.")
             return
 
-        for row in rows:
-            timestamp = row[0] if len(row) > 0 else "—"
-            filename  = row[1] if len(row) > 1 else "—"
-            groups    = row[2] if len(row) > 2 else "—"
-            alert     = row[3] if len(row) > 3 else ""
-            with st.expander(f"{timestamp} — {filename} → {groups}"):
-                st.text(alert)
+        # Build category list from actual data only
+        all_categories = sorted({r["category"] for r in tips_rows})
+
+        selected_cats = st.multiselect(
+            "Filter by Category",
+            options=all_categories,
+            default=all_categories,
+        )
+
+        filtered = [r for r in tips_rows if r["category"] in selected_cats]
+        st.caption(f"Showing {len(filtered)} tip(s) across {len(selected_cats)} category/categories.")
+        st.divider()
+
+        # Group by category and display
+        from collections import defaultdict
+        grouped = defaultdict(list)
+        for r in filtered:
+            grouped[r["category"]].append(r)
+
+        for category in sorted(grouped.keys()):
+            st.subheader(f"🏷️ {category}  ({len(grouped[category])})")
+            for tip in grouped[category]:
+                st.info(tip["tip_text"])
+                st.caption(f"📅 {tip['timestamp']}  |  📁 {tip['filename']}  |  👥 {tip['groups']}")
+            st.divider()
         return
+
+    GROUP_MAP = get_group_map()
 
     st.title("🦺 GECO HSE Safety Alert")
     st.caption("Upload a PowerBI Excel export → review the AI-generated alert → send to WhatsApp groups.")
@@ -111,8 +178,9 @@ def main():
                     tmp_path = tmp.name
                 try:
                     descriptions = hse_bot.read_descriptions(tmp_path)
-                    tips = hse_bot.generate_tips(descriptions)
+                    tips, structured_tips = hse_bot.generate_tips(descriptions)
                     st.session_state.tips = tips
+                    st.session_state.structured_tips = structured_tips
                     st.session_state.filename = uploaded_file.name
                     st.session_state.desc_count = len(descriptions)
                 except Exception as e:
@@ -131,7 +199,7 @@ def main():
         st.markdown("**Step 3 — Select Groups & Send**")
 
         if not GROUP_MAP:
-            st.warning("No WhatsApp groups configured. Set GREEN_API_GROUPS in your environment variables.")
+            st.warning("No WhatsApp groups found. Make sure GREEN_API_INSTANCE_ID and GREEN_API_TOKEN are set correctly.")
             return
 
         selected = []
@@ -151,12 +219,16 @@ def main():
                         errors.append(GROUP_MAP[group_id])
                     time.sleep(3)
 
-                hse_bot.log_to_sheets(st.session_state.filename, edited, selected, "sent")
+                hse_bot.log_to_sheets(
+                    st.session_state.filename, edited, selected, "sent",
+                    st.session_state.get("structured_tips"),
+                )
 
             if success == len(selected):
                 st.success(f"✅ Sent to {success} group(s) successfully!")
                 del st.session_state["tips"]
                 del st.session_state["filename"]
+                st.session_state.pop("structured_tips", None)
             else:
                 st.warning(f"Sent to {success}/{len(selected)} groups. Failed: {', '.join(errors)}")
 
