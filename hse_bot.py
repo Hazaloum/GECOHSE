@@ -100,11 +100,30 @@ def log_to_sheets(filename: str, tips: str, groups: list[str], status: str):
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDS_JSON, scope)
         gc = gspread.authorize(creds)
-        sheet = gc.open_by_key(LOG_SHEET_ID).sheet1
-        sheet.append_row([
+        workbook = gc.open_by_key(LOG_SHEET_ID)
+
+        # --- Send log (sheet1) ---
+        workbook.sheet1.append_row([
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            filename,
             ", ".join(groups),
+            status,
         ])
+
+        # --- Tips Library tab ---
+        try:
+            library = workbook.worksheet("Tips Library")
+        except gspread.exceptions.WorksheetNotFound:
+            library = workbook.add_worksheet(title="Tips Library", rows=1000, cols=4)
+            library.append_row(["Timestamp", "Filename", "Groups", "Alert"])
+
+        library.append_row([
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            filename,
+            ", ".join(groups),
+            tips,
+        ])
+
         print("  ✓ Logged to Google Sheets")
     except Exception as e:
         print(f"  ✗ Sheets log failed: {e}")

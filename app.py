@@ -3,6 +3,8 @@ import time
 import tempfile
 
 import streamlit as st
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 from dotenv import load_dotenv
 
 import hse_bot
@@ -34,10 +36,64 @@ def check_password():
     return False
 
 
+def load_tips_library():
+    log_sheet_id = os.getenv("LOG_SHEET_ID")
+    creds_content = os.getenv("GOOGLE_CREDS_JSON_CONTENT")
+    if creds_content:
+        import json, tempfile
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+        tmp.write(creds_content)
+        tmp.close()
+        creds_path = tmp.name
+    else:
+        creds_path = os.getenv("GOOGLE_CREDS_JSON", os.path.join(os.path.dirname(__file__), "credentials.json"))
+
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_name(creds_path, scope)
+    gc = gspread.authorize(creds)
+    sheet = gc.open_by_key(log_sheet_id).worksheet("Tips Library")
+    rows = sheet.get_all_values()
+    if len(rows) <= 1:
+        return []
+    # Skip header row
+    return list(reversed(rows[1:]))  # newest first
+
+
 def main():
     st.set_page_config(page_title="GECO HSE Portal", page_icon="🦺", layout="centered")
 
     if not check_password():
+        return
+
+    page = st.sidebar.radio("Navigate", ["Send Alert", "Tips Library"])
+
+    if page == "Tips Library":
+        st.title("📚 Tips Library")
+        st.caption("All previously generated and sent safety alerts.")
+        st.divider()
+
+        if not os.getenv("LOG_SHEET_ID"):
+            st.warning("No LOG_SHEET_ID configured — cannot load library.")
+            return
+
+        with st.spinner("Loading tips library..."):
+            try:
+                rows = load_tips_library()
+            except Exception as e:
+                st.error(f"Could not load library: {e}")
+                return
+
+        if not rows:
+            st.info("No alerts have been sent yet.")
+            return
+
+        for row in rows:
+            timestamp = row[0] if len(row) > 0 else "—"
+            filename  = row[1] if len(row) > 1 else "—"
+            groups    = row[2] if len(row) > 2 else "—"
+            alert     = row[3] if len(row) > 3 else ""
+            with st.expander(f"{timestamp} — {filename} → {groups}"):
+                st.text(alert)
         return
 
     st.title("🦺 GECO HSE Safety Alert")
