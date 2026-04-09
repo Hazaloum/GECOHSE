@@ -175,14 +175,31 @@ def main():
                     st.session_state.desc_count = len(descriptions)
                 except Exception as e:
                     st.error(f"Error: {e}")
-                finally:
                     os.unlink(tmp_path)
+                    st.stop()
+                finally:
+                    if os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
+
+            with st.spinner("Translating to Urdu..."):
+                try:
+                    st.session_state.tips_urdu = hse_bot.translate_alert(st.session_state.tips, "Urdu")
+                except Exception as e:
+                    st.session_state.tips_urdu = f"[Translation failed: {e}]"
+
+            with st.spinner("Translating to Hindi..."):
+                try:
+                    st.session_state.tips_hindi = hse_bot.translate_alert(st.session_state.tips, "Hindi")
+                except Exception as e:
+                    st.session_state.tips_hindi = f"[Translation failed: {e}]"
 
     # --- Step 2: Review ---
     if "tips" in st.session_state:
         st.divider()
         st.markdown(f"**Step 2 — Review Alert** _(generated from {st.session_state.desc_count} incidents)_")
-        edited = st.text_area("Edit if needed:", value=st.session_state.tips, height=420, label_visibility="collapsed")
+        edited = st.text_area("🇬🇧 English", value=st.session_state.tips, height=380)
+        edited_urdu = st.text_area("🇵🇰 Urdu", value=st.session_state.get("tips_urdu", ""), height=380)
+        edited_hindi = st.text_area("🇮🇳 Hindi", value=st.session_state.get("tips_hindi", ""), height=380)
 
         # --- Step 3: Send ---
         st.divider()
@@ -199,11 +216,14 @@ def main():
 
         st.write("")
         if st.button("Send to WhatsApp 🚀", type="primary", disabled=len(selected) == 0):
+            parts = [p for p in [edited, edited_urdu, edited_hindi] if p.strip()]
+            combined_message = "\n\n━━━━━━━━━━━━━━━━━━━━\n\n".join(parts)
+
             with st.spinner("Sending..."):
                 success = 0
                 errors = []
                 for group_id in selected:
-                    if hse_bot.send_to_group(group_id, edited):
+                    if hse_bot.send_to_group(group_id, combined_message):
                         success += 1
                     else:
                         errors.append(GROUP_MAP[group_id])
@@ -217,6 +237,8 @@ def main():
             if success == len(selected):
                 st.success(f"✅ Sent to {success} group(s) successfully!")
                 del st.session_state["tips"]
+                st.session_state.pop("tips_urdu", None)
+                st.session_state.pop("tips_hindi", None)
                 del st.session_state["filename"]
                 st.session_state.pop("structured_tips", None)
             else:

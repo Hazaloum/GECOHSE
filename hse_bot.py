@@ -121,6 +121,25 @@ def generate_tips(descriptions: list[str]) -> tuple[str, list[dict]]:
         return raw, []
 
 
+def translate_alert(alert: str, language: str) -> str:
+    response = client.chat.completions.create(
+        model="gpt-5.4-mini",
+        max_completion_tokens=900,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    f"You are a professional translator. Translate the following WhatsApp safety alert into {language}. "
+                    "Preserve all formatting exactly: WhatsApp bold (*text*), emojis, line breaks, and structure. "
+                    "Only translate the words — do not alter emojis, bullet numbers, or formatting symbols like * and _."
+                ),
+            },
+            {"role": "user", "content": alert},
+        ],
+    )
+    return response.choices[0].message.content.strip()
+
+
 def send_to_group(group_id: str, message: str) -> bool:
     url = f"https://api.green-api.com/waInstance{GREEN_API_INSTANCE}/sendMessage/{GREEN_API_TOKEN}"
     payload = {"chatId": group_id, "message": message}
