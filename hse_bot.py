@@ -59,8 +59,8 @@ def generate_tips(descriptions: list[str]) -> tuple[str, list[dict]]:
     incidents_text = "\n".join(f"- {d}" for d in descriptions)
     categories_str = ", ".join(CATEGORIES)
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        max_tokens=700,
+        model="gpt-5.4-mini",
+        max_completion_tokens=700,
         response_format={"type": "json_object"},
         messages=[
             {
