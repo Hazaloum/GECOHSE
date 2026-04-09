@@ -81,8 +81,7 @@ def generate_tips(descriptions: list[str]) -> tuple[str, list[dict]]:
                     "Start with a bold header line. End with: _Management & HSE Team_\n\n"
                     "You MUST respond with a JSON object with exactly two keys:\n"
                     "1. 'alert': the full WhatsApp alert string. Each tip on its own numbered line in the format above. "
-                    "Append the category label inline at the very end of each tip: — _[Category]_. "
-                    "Category labels must come from the allowed list only.\n"
+                    "Do NOT append any category label at the end of the tip line.\n"
                     "2. 'tips': a JSON array with one object per tip. Each object must have:\n"
                     "   - 'tip_text': plain-English version of the tip (no emojis, no WhatsApp formatting)\n"
                     f"   - 'category': one category chosen strictly from this list: {categories_str}\n"
@@ -93,7 +92,7 @@ def generate_tips(descriptions: list[str]) -> tuple[str, list[dict]]:
                 "role": "user",
                 "content": (
                     "Read these incident descriptions and generate a safety alert for all workers. "
-                    "Pick the 3-4 most critical recurring issues. "
+                    "Pick exactly 3 of the most critical recurring issues. "
                     "Each tip must be one line: Subject - Action - Warning & Consequence. Keep it short and direct.\n\n"
                     f"Incidents:\n{incidents_text}"
                 ),
