@@ -26,10 +26,11 @@ if _CREDS_CONTENT:
     GOOGLE_CREDS_JSON = _tmp.name
 else:
     GOOGLE_CREDS_JSON = os.getenv("GOOGLE_CREDS_JSON", os.path.join(os.path.dirname(__file__), "credentials.json"))
-GREEN_API_INSTANCE  = os.getenv("GREEN_API_INSTANCE_ID")
-GREEN_API_TOKEN     = os.getenv("GREEN_API_TOKEN")
-GREEN_API_GROUPS    = [g.strip() for g in os.getenv("GREEN_API_GROUPS", "").split(",") if g.strip()]
-LOG_SHEET_ID        = os.getenv("LOG_SHEET_ID")
+GREEN_API_INSTANCE      = os.getenv("GREEN_API_INSTANCE_ID")
+GREEN_API_TOKEN         = os.getenv("GREEN_API_TOKEN")
+GREEN_API_GROUPS        = [g.strip() for g in os.getenv("GREEN_API_GROUPS", "").split(",") if g.strip()]
+LOG_SHEET_ID            = os.getenv("LOG_SHEET_ID")
+GOOGLE_DRIVE_FOLDER_ID  = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -116,6 +117,58 @@ def generate_tips(descriptions: list[str]) -> tuple[str, list[dict]]:
         print(f"  Warning: Could not parse structured tips: {e}. Falling back to raw string.")
         raw = response.choices[0].message.content.strip()
         return raw, []
+
+
+def _get_drive_service():
+    from googleapiclient.discovery import build
+    scope = ["https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDS_JSON, scope)
+    return build("drive", "v3", credentials=creds)
+
+
+def upload_image_to_drive(file_bytes: bytes, filename: str, mimetype: str) -> str:
+    """Upload an image to Google Drive and return the public file ID."""
+    from googleapiclient.http import MediaInMemoryUpload
+    service = _get_drive_service()
+    metadata = {"name": filename}
+    if GOOGLE_DRIVE_FOLDER_ID:
+        metadata["parents"] = [GOOGLE_DRIVE_FOLDER_ID]
+    media = MediaInMemoryUpload(file_bytes, mimetype=mimetype)
+    file = service.files().create(body=metadata, media_body=media, fields="id").execute()
+    file_id = file.get("id")
+    # Make publicly readable so it can be sent via WhatsApp
+    service.permissions().create(
+        fileId=file_id,
+        body={"type": "anyone", "role": "reader"},
+    ).execute()
+    return file_id
+
+
+def log_image_to_library(filename: str, file_id: str, category: str, description: str):
+    """Log an uploaded image to the Image Library tab in Google Sheets."""
+    if not LOG_SHEET_ID:
+        return
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDS_JSON, scope)
+    gc = gspread.authorize(creds)
+    workbook = gc.open_by_key(LOG_SHEET_ID)
+    header = ["Timestamp", "Filename", "Drive File ID", "Category", "Description", "Drive URL"]
+    try:
+        sheet = workbook.worksheet("Image Library")
+        if sheet.row_values(1) != header:
+            sheet.update("A1:F1", [header])
+    except gspread.exceptions.WorksheetNotFound:
+        sheet = workbook.add_worksheet(title="Image Library", rows=2000, cols=6)
+        sheet.append_row(header)
+    drive_url = f"https://drive.google.com/file/d/{file_id}/view"
+    sheet.append_row([
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        filename,
+        file_id,
+        category,
+        description,
+        drive_url,
+    ])
 
 
 def translate_alert(alert: str, language: str) -> str:

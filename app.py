@@ -106,7 +106,7 @@ def main():
     if not check_password():
         return
 
-    page = st.sidebar.radio("Navigate", ["Send Alert", "Tips Library"])
+    page = st.sidebar.radio("Navigate", ["Send Alert", "Tips Library", "Upload Image"])
 
     if page == "Tips Library":
         st.title("📚 Tips Library")
@@ -149,6 +149,36 @@ def main():
                 for tip in tips_in_cat:
                     st.info(tip["tip_text"])
                     st.caption(f"📅 {tip['timestamp']}  |  📁 {tip['filename']}  |  👥 {tip['groups']}")
+        return
+
+    if page == "Upload Image":
+        st.title("🖼️ Upload Image to Library")
+        st.caption("Upload safety-related images to Google Drive. They will be available to attach to alerts.")
+        st.divider()
+
+        if not os.getenv("LOG_SHEET_ID"):
+            st.warning("No LOG_SHEET_ID configured — cannot log to library.")
+            return
+
+        img_file = st.file_uploader("Select an image", type=["jpg", "jpeg", "png", "webp"])
+
+        if img_file:
+            st.image(img_file, width=300)
+            category = st.selectbox("Category", hse_bot.CATEGORIES)
+            description = st.text_input("Description (optional)", placeholder="e.g. Worker wearing full PPE on scaffold")
+
+            if st.button("Upload to Library 📤", type="primary"):
+                with st.spinner("Uploading to Google Drive..."):
+                    try:
+                        file_bytes = img_file.read()
+                        mimetype = img_file.type or "image/jpeg"
+                        file_id = hse_bot.upload_image_to_drive(file_bytes, img_file.name, mimetype)
+                        hse_bot.log_image_to_library(img_file.name, file_id, category, description)
+                        drive_url = f"https://drive.google.com/file/d/{file_id}/view"
+                        st.success(f"✅ Uploaded successfully!")
+                        st.markdown(f"[View on Google Drive]({drive_url})")
+                    except Exception as e:
+                        st.error(f"Upload failed: {e}")
         return
 
     GROUP_MAP = get_group_map()
